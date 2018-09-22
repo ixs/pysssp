@@ -1,0 +1,100 @@
+#!/usr/bin/python
+#
+# Copyright 2018 Andreas Thienemann <andreas@bawue.net>
+#
+# GPL3+ licensed
+#
+# Milter to scan mail via SSSP for viruses
+#
+
+import argparse
+import email
+import os
+import socket
+import sys
+from multiprocessing import Process
+import Milter
+from Milter.utils import parse_addr
+import syslog
+import sssp
+
+global args
+
+class ssspMilter(Milter.Base):
+  def __init__(self):  # A new instance with each new connection.
+    self.queueid = None
+    self.id = Milter.uniqueID()  # Integer incremented with each call.
+    self.rcpts = []
+
+  def log(self, msg):
+    if self.queueid:
+      syslog.syslog('{}: {}'.format(self.queue_id, msg))
+    else
+      syslog.syslog('{}: {}'.format(self.id, msg))
+
+  # multiple messages can be received on a single connection
+  # envfrom (MAIL FROM in the SMTP protocol) seems to mark the start
+  # of each message.
+  def envfrom(self, envfrom, *str):
+    self.mail = ''
+    if envfrom.startswith('<') and envfrom.endswith('>'):
+      self.envfrom = envfrom[1:-1]
+    else:
+      self.envfrom = envfrom
+    return Milter.CONTINUE
+
+  def envrcpt(self, to, *str):
+    if to.startswith('<') and to.endswith('>'):
+      self.rcpts.append(to[1:-1])
+    else:
+      self.rcpts.append(to)
+    return Milter.CONTINUE
+
+  def header(self, name, val):
+    self.mail += '{}: {}\n'.format(name, val)
+    return Milter.CONTINUE
+
+  def eoh(self):
+    self.mail += '\n'
+    return Milter.CONTINUE
+
+  def body(self, chunk):
+    self.mail += chunk
+    return Milter.CONTINUE
+
+  def eom(self):
+    self.queue_id = self.getsymval('i')
+    scanner = sssp.sssp(args.sssp_socket)
+    result, msg = scanner.check(self.mail)
+    if not result:
+      if args.quarantine:
+        self.log('{}, marked as hold.'.format(msg))
+        self.quarantine(msg)
+        return Milter.ACCEPT
+      self.log('{}, rejecting.'.format(msg))
+      self.setreply('550', '5.7.1', 'Message seems to contain a virus')
+      return Milter.REJECT
+    return Milter.ACCEPT
+
+def main():
+  global args
+
+  syslog.openlog(ident='milter-sssp', logoption=syslog.LOG_PID, facility=syslog.LOG_MAIL)
+  syslog.syslog('Milter starting using socket {}'.format(args.socket))
+  job = Process()
+  job.start()
+  Milter.factory = ssspMilter
+  timeout = 60
+  Milter.runmilter('ssspMilter', args.socket, timeout)
+  job.join()
+  syslog.syslog('Milter stopping')
+  syslog.closelog()
+
+if __name__ == "__main__":
+  parser = argparse.ArgumentParser(description='Milter to scan mail for viruses via SSSP.')
+  parser.add_argument('-q', '--quarantine', action='store_true', default=False, help='Quarantine suspect mail rather than rejecting it')
+  parser.add_argument('socket', help='Milter socket for communicating to postfix')
+  parser.add_argument('sssp_socket', help='Socket for communicating to sssp interface.')
+  args = parser.parse_args()
+
+  main()
