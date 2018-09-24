@@ -5,6 +5,7 @@
 # Copyright 2018 Andreas Thienemann <andreas@bawue.net>
 #
 
+import pprint
 import socket
 import sys
 
@@ -16,27 +17,40 @@ class SSSPError(Exception):
       msg = "An error occured during SSSP Processing"
     super(SSSPError, self).__init__(msg)
 
+class SSSPOptionError(SSSPError):
+  """Generic SSSPOptionError Exception"""
+  def __init__(self, msg=None):
+    if msg is None:
+      # Set some default useful error message
+      msg = "An option could not be set"
+    super(SSSPOptionError, self).__init__(msg)
+
 class sssp():
   def __init__(self, socket='/var/run/savdi/sssp.sock'):
     self.eicar = "X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
     self.sssp_socket = socket
     self.sssp_version = 1.0
+    self.timeout = 2
+    self.maxwait = 30
+    if self.maxwait < self.timeout:
+      self.maxwait = self.timeout
     self.connect()
-    self.handshake()
+    self._handshake()
 
   def connect(self):
     self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    self.s.settimeout(2)
+    self.s.settimeout(self.timeout)
     self.s.connect(self.sssp_socket)
 
-  def recv_line(self):
+  def _recv_line(self):
     line = []
-    maxwait = 15
     wait = 0
     while True:
       try:
         c = self.s.recv(1)
       except socket.timeout:
+        if wait >= (self.maxwait / self.timeout):
+          raise
         if len(line) == 0:
           wait += 1
           continue
@@ -45,10 +59,10 @@ class sssp():
           break
     return "".join(line)
 
-  def recv_message(self):
+  def _recv_message(self):
     msg = []
     while True:
-      l = self.recv_line().strip()
+      l = self._recv_line().strip()
       if len(l) == 0:
         break
       msg.append(l)
@@ -56,25 +70,27 @@ class sssp():
       return "\n".join(msg)
     return ''
 
-  def read_response(self, type="line"):
-    resp = self.recv_line().strip()
-    if resp.startswith('REJ'):
-      self.handle_error(resp)
+  def _read_response(self, type="line"):
+    resp = self._recv_line().strip()
+    if resp.startswith('ACC '):
+      return ''
+    if resp.startswith('REJ '):
+      self._handle_error(resp)
     return resp
 
-  def send_command(self, command):
+  def _send_command(self, command):
     self.s.send('{}\n'.format(command))
-    return self.read_response(self)
+    return self._read_response(self)
 
-  def handshake(self):
-    resp = self.read_response()
+  def _handshake(self):
+    resp = self._read_response()
     if not resp.startswith('OK SSSP'):
       raise SSSPError('Server not ready')
     if not resp.endswith('/{}'.format(self.sssp_version)):
       raise SSSPError('Server sent unexpected protocol version')
-    return self.send_command('SSSP/{}'.format(self.sssp_version))
+    return self._send_command('SSSP/{}'.format(self.sssp_version))
 
-  def handle_error(self, msg):
+  def _handle_error(self, msg):
     errors = {1: 'The request was not recognised.',
               2: 'The SSSP version number was incorrect.',
               3: 'There was an error in the OPTIONS list.',
@@ -84,26 +100,73 @@ class sssp():
     error = int(msg.split()[-1])
     raise SSSPError('The Server rejected our request: {}'.format(errors[error]))
 
-  def send_data(self, data):
+  def _send_data(self, data, read_response=True):
     self.s.sendall(data)
-    return self.read_response()
+    if read_response:
+      return self._read_response()
 
   def query(self, type=''):
     msg = []
-    msg.append(self.send_command('QUERY {}'.format(type)))
-    msg.extend(self.recv_message().split('\n'))
+    msg.append(self._send_command('QUERY {}'.format(type.upper())))
+    msg.extend(self._recv_message().split('\n'))
     return [x for x in msg if len(x) > 0]
-    
+
+  def set_options(self, options):
+    self._send_data('OPTIONS\n', False)
+    for option in options:
+      for k, v in option.items():
+        self._send_data('{}: {}\n'.format(k, v), False)
+    self._send_command('\n')
+    resp = self._recv_message().split(' ', 3)
+    if resp[1] == 'OK':
+      return True
+    else:
+      raise SSSPOptionError(resp[3])
+
+  def savi_opts(self):
+    types = {0: 'SOPHOS_TYPE_INVALID',
+             1: 'SOPHOS_TYPE_U08',
+             2: 'SOPHOS_TYPE_U16',
+             3: 'SOPHOS_TYPE_U32',
+             4: 'SOPHOS_TYPE_S08',
+             5: 'SOPHOS_TYPE_S16',
+             6: 'SOPHOS_TYPE_S32',
+             7: 'SOPHOS_TYPE_BOOLEAN',
+             8: 'SOPHOS_TYPE_BYTESTREAM',
+             9: 'SOPHOS_TYPE_OPTION_GROUP',
+             10: 'SOPHOS_TYPE_OPTION_STRING'}
+
+    resp = self.query('SAVI')
+    opts = {}
+    opt = {}
+    for l in resp:
+      key, value = [x.strip() for x in l.split(':')]
+
+      if key == 'type':
+        value = int(value)
+        try:
+          opt.update({'named_type': types[value][12:]})
+        except KeyError:
+          opt.update({'named_type': 'TYPE{}'.format(value)})
+
+      opt.update({key: value})
+
+      if key == 'value':
+        if opt['type'] > 0 and opt['type'] < 7:
+          value = int(value)
+        opts[opt['name']] = {'value': value, 'type': opt['named_type']}
+    return opts
+
   def scandata(self, data):
     data_size = len(data)
     msg = []
-    msg.append(self.send_command('SCANDATA {}'.format(data_size)))
-    msg.append(self.send_data(data))
-    msg.extend(self.recv_message().split('\n'))
+    msg.append(self._send_command('SCANDATA {}'.format(data_size)))
+    msg.append(self._send_data(data))
+    msg.extend(self._recv_message().split('\n'))
     return [x for x in msg if len(x) > 0]
 
   def disconnect(self):
-    self.send_command('BYE')
+    self._send_command('BYE')
     self.s.close()
 
   def scan(self, data):
@@ -112,7 +175,6 @@ class sssp():
     ok = []
     done = []
     resp = self.scandata(data)
-    self.disconnect()
     virus.extend([x.split()[1] for x in resp if x.startswith('VIRUS ')])
     fail.extend([x.split()[1] for x in resp if x.startswith('FAIL ')])
     ok.extend([x.split()[1] for x in resp if x.startswith('OK ')])
@@ -129,8 +191,18 @@ class sssp():
     else:
       return (True, 'Unknown error')
 
+  def selftest(self):
+    res, msg = self.check(self.eicar)
+    if res or not 'EICAR-AV-Test' in msg:
+      raise SSSPError('Selftest failed. EICAR Virus was not detected.')
+    return True
+
 if __name__ == "__main__":
   scanner = sssp()
-  #print scanner.query('SERVER')
+  scanner.set_options([{'savists': 'BehaviourSuspicious 1'}])
+  scanner.set_options([{'savigrp': 'GrpSuper 1'}])
+  pprint.pprint(scanner.savi_opts())
+  print scanner.selftest()
   with open(sys.argv[1], 'r') as f:
-    print scanner.check(f.read())
+    print(scanner.check(f.read()))
+  scanner.disconnect()
