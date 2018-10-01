@@ -17,6 +17,8 @@ import Milter
 from Milter.utils import parse_addr
 import syslog
 import sssp
+import textwrap
+import traceback
 
 global args
 
@@ -27,9 +29,9 @@ class ssspMilter(Milter.Base):
     self.rcpts = []
 
   def log(self, msg):
-    if self.queueid:
+    if self.queue_id:
       syslog.syslog('{}: {}'.format(self.queue_id, msg))
-    else
+    else:
       syslog.syslog('{}: {}'.format(self.id, msg))
 
   # multiple messages can be received on a single connection
@@ -64,16 +66,35 @@ class ssspMilter(Milter.Base):
 
   def eom(self):
     self.queue_id = self.getsymval('i')
-    scanner = sssp.sssp(args.sssp_socket)
-    result, msg = scanner.check(self.mail)
-    if not result:
+    try:
+      scanner = sssp.sssp(args.sssp_socket)
+      if not scanner.selftest():
+        self.log('SAVDI selftest failed. Not scanning, accepting mail.')
+        return Milter.ACCEPT
+      result, msg = scanner.check(self.mail)
+    except:
+      self.log('Unknown SAVDI Error. {}'.format(traceback.format_exc()))
+      return milter.ACCEPT
+
+    engine = scanner.query_engine()
+    server = scanner.query_server()
+    self.addheader('X-Virus-Scanner', textwrap.fill('{}, Engine: {}, SAV: {} ({}) on {}'.format(server['version'],
+                     engine['engineversion'], engine['savversion'], engine['virusdatachecksum'],
+                     socket.gethostname()), 61), -1)
+    if result:
+      self.addheader('X-Virus-Scan', 'Found to be clean.', -1)
+      self.log('{}, accepting.'.format(msg))
+    else:
+      self.addheader('X-Virus-Scan', 'Found to be infected. ({})'.format(msg.split()[-1]), -1)
+      self.log('Mail reported infected with {} by SAVDI.'.format(msg.split()[-1]))
       if args.quarantine:
         self.log('{}, marked as hold.'.format(msg))
         self.quarantine(msg)
         return Milter.ACCEPT
-      self.log('{}, rejecting.'.format(msg))
-      self.setreply('550', '5.7.1', 'Message seems to contain a virus')
-      return Milter.REJECT
+      if args.reject:
+        self.log('{}, rejecting.'.format(msg))
+        self.setreply('550', '5.7.1', 'Message rejected due to malware/virus scanning.')
+        return Milter.REJECT
     return Milter.ACCEPT
 
 def main():
@@ -92,7 +113,8 @@ def main():
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description='Milter to scan mail for viruses via SSSP.')
-  parser.add_argument('-q', '--quarantine', action='store_true', default=False, help='Quarantine suspect mail rather than rejecting it')
+  parser.add_argument('-q', '--quarantine', action='store_true', default=False, help='Quarantine suspect mail rather than rejecting it.')
+  parser.add_argument('-r', '--reject', action='store_true', default=False, help='Reject suspect mail rather than accepting and marking it.')
   parser.add_argument('socket', help='Milter socket for communicating to postfix')
   parser.add_argument('sssp_socket', help='Socket for communicating to sssp interface.')
   args = parser.parse_args()

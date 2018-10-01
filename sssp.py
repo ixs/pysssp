@@ -105,7 +105,7 @@ class sssp():
     if read_response:
       return self._read_response()
 
-  def query(self, type=''):
+  def _query(self, type=''):
     msg = []
     msg.append(self._send_command('QUERY {}'.format(type.upper())))
     msg.extend(self._recv_message().split('\n'))
@@ -123,7 +123,37 @@ class sssp():
     else:
       raise SSSPOptionError(resp[3])
 
-  def savi_opts(self):
+  def query_engine(self):
+    resp = self._query('ENGINE')
+    infos = {}
+    vids = []
+    vid = {}
+    for l in resp:
+      key, value = [x.strip() for x in l.split(':')]
+
+      if key in ['date', 'filename', 'state', 'type']:
+        if key in ['state', 'type']:
+          value = int(value)
+
+        vid.update({key: value})
+
+        if key == 'type':
+          vids.append(vid)
+          vid = {}
+      else:
+        infos.update({key: value})
+    infos.update({'virus_ids': vids})
+    return infos
+
+  def query_server(self):
+    resp = self._query('SERVER')
+    infos = {}
+    for l in resp:
+      key, value = [x.strip() for x in l.split(':')]
+      infos.update({key: value})
+    return infos
+
+  def query_savi(self):
     types = {0: 'SOPHOS_TYPE_INVALID',
              1: 'SOPHOS_TYPE_U08',
              2: 'SOPHOS_TYPE_U16',
@@ -136,7 +166,7 @@ class sssp():
              9: 'SOPHOS_TYPE_OPTION_GROUP',
              10: 'SOPHOS_TYPE_OPTION_STRING'}
 
-    resp = self.query('SAVI')
+    resp = self._query('SAVI')
     opts = {}
     opt = {}
     for l in resp:
@@ -199,10 +229,7 @@ class sssp():
 
 if __name__ == "__main__":
   scanner = sssp()
-  scanner.set_options([{'savists': 'BehaviourSuspicious 1'}])
   scanner.set_options([{'savigrp': 'GrpSuper 1'}])
-  pprint.pprint(scanner.savi_opts())
-  print scanner.selftest()
   with open(sys.argv[1], 'r') as f:
     print(scanner.check(f.read()))
   scanner.disconnect()
