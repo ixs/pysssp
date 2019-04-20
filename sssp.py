@@ -1,11 +1,26 @@
 #!/usr/bin/python
 #
-# Simple SSSP client
+# Python implementation of the Sophos SSSP protocol to interface with the
+# Sophos SAVDI virus scanner daemon.
 #
-# Copyright 2018 Andreas Thienemann <andreas@bawue.net>
+#   Copyright 2018,2019 Andreas Thienemann <andreas@bawue.net>
+#
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
 import pprint
+import codecs
 import socket
 import sys
 
@@ -27,7 +42,9 @@ class SSSPOptionError(SSSPError):
 
 class sssp():
   def __init__(self, socket='/var/run/savdi/sssp.sock'):
-    self.eicar = "X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    # The eicar string is ROT13 encoded to prevent virus scanners from triggering a
+    # false alarm
+    self.eicar = "K5B!C%@NC[4\\CMK54(C^)7PP)7}$RVPNE-FGNAQNEQ-NAGVIVEHF-GRFG-SVYR!$U+U*"
     self.sssp_socket = socket
     self.sssp_version = 1.0
     self.timeout = 2
@@ -212,6 +229,7 @@ class sssp():
     return (done, ok, fail, virus)
 
   def check(self, data):
+    """Check a string for a virus"""
     done, ok, fail, virus = self.scan(data)
     _, state, code, msg = done[-1].split(' ', 3)
     if code == '0000':
@@ -222,7 +240,12 @@ class sssp():
       return (True, 'Unknown error')
 
   def selftest(self):
-    res, msg = self.check(self.eicar)
+    """Run a quick selftest on the savdi daemon.
+
+    Send the eicar test string to the savdi socket and raise an exception if
+    the report comes back clean.
+    """
+    res, msg = self.check(codecs.encode(self.eicat, 'rot_13'))
     if res or not 'EICAR-AV-Test' in msg:
       raise SSSPError('Selftest failed. EICAR Virus was not detected.')
     return True
@@ -230,6 +253,8 @@ class sssp():
 if __name__ == "__main__":
   scanner = sssp()
   scanner.set_options([{'savigrp': 'GrpSuper 1'}])
+  pprint.pprint(scanner.query_engine())
+  pprint.pprint(scanner.query_server())
   with open(sys.argv[1], 'r') as f:
     print(scanner.check(f.read()))
   scanner.disconnect()
