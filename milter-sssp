@@ -20,6 +20,9 @@ import sssp
 import textwrap
 import traceback
 
+milter_name = 'milter-sssp'
+milter_version = '0.1.0'
+
 global args
 
 class ssspMilter(Milter.Base):
@@ -40,9 +43,9 @@ class ssspMilter(Milter.Base):
   def envfrom(self, envfrom, *str):
     self.mail = ''
     if envfrom.startswith('<') and envfrom.endswith('>'):
-      self.envfrom = envfrom[1:-1]
+      self.env_from = envfrom[1:-1]
     else:
-      self.envfrom = envfrom
+      self.env_from = envfrom
     return Milter.CONTINUE
 
   def envrcpt(self, to, *str):
@@ -74,13 +77,13 @@ class ssspMilter(Milter.Base):
       result, msg = scanner.check(self.mail)
     except:
       self.log('Unknown SAVDI Error. {}'.format(traceback.format_exc()))
-      return milter.ACCEPT
+      return Milter.ACCEPT
 
     engine = scanner.query_engine()
     server = scanner.query_server()
-    self.addheader('X-Virus-Scanner', textwrap.fill('{}, Engine: {}, SAV: {} ({}) on {}'.format(server['version'],
+    self.addheader('X-Virus-Scanner', textwrap.fill('{}, Engine: {}, SAV: {} ({}) on {} using {} {}'.format(server['version'],
                      engine['engineversion'], engine['savversion'], engine['virusdatachecksum'],
-                     socket.gethostname()), 61), -1)
+                     socket.gethostname(), milter_name, milter_version), 61), -1)
     if result:
       self.addheader('X-Virus-Scan', 'Found to be clean.', -1)
       self.log('{}, accepting.'.format(msg))
