@@ -55,9 +55,20 @@ class sssp():
     self._handshake()
 
   def connect(self):
-    self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    """Connect to SSSP socket"""
+    if self.socket[0] == '/':
+      self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+      socket = self.sssp_socket
+    elif self.socket.startswith('inet:'):
+      self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      _, bind_host, port = self.sssp_socket.split(':')
+      socket = (bind_host, port)
+    elif isinstance(self.socket, tuple):
+      self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      socket = self.sssp_socket
+
     self.s.settimeout(self.timeout)
-    self.s.connect(self.sssp_socket)
+    self.s.connect(socket)
 
   def _recv_line(self):
     line = []
@@ -245,7 +256,7 @@ class sssp():
     Send the eicar test string to the savdi socket and raise an exception if
     the report comes back clean.
     """
-    res, msg = self.check(codecs.encode(self.eicat, 'rot_13'))
+    res, msg = self.check(codecs.encode(self.eicar, 'rot_13'))
     if res or not 'EICAR-AV-Test' in msg:
       raise SSSPError('Selftest failed. EICAR Virus was not detected.')
     return True
