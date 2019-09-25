@@ -62,7 +62,7 @@ class sssp():
     elif self.sssp_socket.startswith('inet:'):
       self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
       _, bind_host, port = self.sssp_socket.split(':')
-      sock = (bind_host, port)
+      sock = (bind_host, int(port))
     elif isinstance(self.socket, tuple):
       self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
       sock = self.sssp_socket
