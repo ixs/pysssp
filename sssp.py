@@ -41,11 +41,11 @@ class SSSPOptionError(SSSPError):
     super(SSSPOptionError, self).__init__(msg)
 
 class sssp():
-  def __init__(self, socket='/var/run/savdi/sssp.sock'):
+  def __init__(self, sock='/var/run/savdi/sssp.sock'):
     # The eicar string is ROT13 encoded to prevent virus scanners from triggering a
     # false alarm
     self.eicar = "K5B!C%@NC[4\\CMK54(C^)7PP)7}$RVPNE-FGNAQNEQ-NAGVIVEHF-GRFG-SVYR!$U+U*"
-    self.sssp_socket = socket
+    self.sssp_socket = sock
     self.sssp_version = 1.0
     self.timeout = 2
     self.maxwait = 30
@@ -56,19 +56,19 @@ class sssp():
 
   def connect(self):
     """Connect to SSSP socket"""
-    if self.socket[0] == '/':
+    if self.sssp_socket[0] == '/':
       self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-      socket = self.sssp_socket
-    elif self.socket.startswith('inet:'):
+      sock = self.sssp_socket
+    elif self.sssp_socket.startswith('inet:'):
       self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
       _, bind_host, port = self.sssp_socket.split(':')
-      socket = (bind_host, port)
+      sock = (bind_host, port)
     elif isinstance(self.socket, tuple):
       self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-      socket = self.sssp_socket
+      sock = self.sssp_socket
 
     self.s.settimeout(self.timeout)
-    self.s.connect(socket)
+    self.s.connect(sock)
 
   def _recv_line(self):
     line = []
